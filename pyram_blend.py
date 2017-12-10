@@ -249,6 +249,5 @@ def main(image1, image2):
     cv2.imwrite('results/blended_pyramid.jpg', result)
     print('Time elapsed for pyramidal blending: {0:.2f} sec'.format(round(time() - time_pyramid,2)))
 
-
 if __name__ == '__main__':
     main()

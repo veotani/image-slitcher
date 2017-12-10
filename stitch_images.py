@@ -1,4 +1,5 @@
 import cv2
+import os
 import numpy as np
 import pyram_blend
 from time import time
@@ -98,6 +99,12 @@ def equalize_histogram_color(img):
 
 # Main function definition
 def main():
+    # Создаём директории для результатов, если их ещё не существует
+    if not os.path.exists('intermediate'):
+        os.makedirs('intermediate')
+    if not os.path.exists('results'):
+        os.makedirs('results')
+
     start_time = time()
     # image1 = cv2.imread('images/scottsdale_right_01.png')
     # image2 = cv2.imread('images/scottsdale_left_01.png')
@@ -129,7 +136,8 @@ def main():
     print('Time elapsed for image warping: {0:.2f} sec'.format(round(time() - image_warping_time,2)))
 
     pyram_blend.main(only_img_1, only_img_2)
-
+    
+    print('Total time elapsed: {0:.2f} sec'.format(round(time() - start_time,2)))
     print('Done, exiting...')
 
 # Call main function
