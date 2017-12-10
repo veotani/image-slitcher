@@ -136,7 +136,7 @@ def main():
     print('Time elapsed for image warping: {0:.2f} sec'.format(round(time() - image_warping_time,2)))
 
     pyram_blend.main(only_img_1, only_img_2)
-    
+
     print('Total time elapsed: {0:.2f} sec'.format(round(time() - start_time,2)))
     print('Done, exiting...')
 

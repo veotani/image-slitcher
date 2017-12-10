@@ -38,7 +38,7 @@ def iexpand(image):
     out = 4 * scipy.signal.convolve2d(outimage, kernel, 'same')
     return out
 
-'''create a gaussain pyramid of a given image'''
+'''create a gaussian pyramid of a given image'''
 def gauss_pyramid(image, levels):
     output = []
     output.append(image)
@@ -100,6 +100,26 @@ def linear_function(x, xmin, xmax):
         res = 255
     return res
 
+'''Нахождение границы области наложения'''
+def get_borders(mask):
+    w1, h1 = mask.shape[:2]
+    bigger_img = np.concatenate((np.ones((w1, 1)) * False, mask, np.ones((w1, 1)) * False), 1)
+    bigger_img = np.concatenate((np.ones((1, h1+2)) * False, bigger_img, np.ones((1, h1+2)) * False), 0)
+    bigger_img = bigger_img.astype(bool)
+    a = bigger_img[1:w1+1, 2:h1+2]
+    b = bigger_img[1:w1+1, 0:h1]
+    c = bigger_img[0:w1, 1:h1+1]
+    d = bigger_img[2:w1+2, 1:h1+1]
+    borders = a | b | c | d
+    borders = borders & ~bigger_img[1:w1+1, 1:h1+1]
+    return borders
+
+'''Ищем ближайшую точку'''
+def closest_node(node, nodes):
+    deltas = nodes - node
+    dist_2 = np.einsum('ij,ij->i', deltas, deltas)
+    return np.argmin(dist_2)
+
 '''Создаём маску, где своим цветом показаны зоны изображений и область наложения'''
 def create_mask(image1, image2):
     mask = np.zeros(image1.shape, dtype=image1.dtype)
@@ -122,13 +142,24 @@ def create_mask(image1, image2):
 def main(image1, image2):
     start_time = time()
 
-    mask, thresh_a, thresh_b, thresh_c = create_mask(image1, image2)
+    img_height = image1.shape[0]
+    img_width = image1.shape[1]
+    # Если изображение слишком большое, ресайзим его
+    max_height = 1000
+    max_width = 1000
+    scale = 0.25
+    if img_height > max_height and img_width > max_width:
+        image1_small = scipy.misc.imresize(image1, (int(img_height * scale), int(img_width * scale)))
+        image2_small = scipy.misc.imresize(image2, (int(img_height * scale), int(img_width * scale)))
+        mask, thresh_a, thresh_b, thresh_c = create_mask(image1_small, image2_small)
+        cv2.imwrite("intermediate/mask_downsized.png", mask)
+        print('Image resized! The new one is {0:.2f} times smaller.'.format(round(1/scale,2)))
+    else:
+        mask, thresh_a, thresh_b, thresh_c =create_mask(image1, image2)
+        cv2.imwrite("intermediate/mask_normal.png", mask)
 
-    cv2.imwrite("intermediate/mask.png", mask)
 
     # Текущая задача: получить контуры С с различием A-C и B-C
-
-    # Значения пикселей в маске, размечающие области изображений
 
     # Создаём маску для линейного блендинга по градиентной маске по заданному направлению
     # Обозначаем зоны А, Б и C:=A^B
@@ -165,89 +196,51 @@ def main(image1, image2):
         intensity = linear_function(p, min_p + (max_p - min_p) * stretch_coef, max_p - (max_p - min_p) * stretch_coef)
         mask_redone[x,y] = (intensity, intensity, intensity)
 
-    cv2.imwrite('results/mask.png', mask_redone)
-    mask = mask_redone
+
+    # Если изображение было слишком большое, возвращаем маску назад
+    if img_height > 1000 and img_width > 1000:
+        mask_redone = scipy.misc.imresize(mask_redone, (img_height, img_width))
+        cv2.imwrite('results/mask_linear_gradient.png', mask_redone)
+
+    # Применяем линейный блендинг по альфа значениям из маски
+    image1f = image1.astype(float)
+    image2f = image2.astype(float)
+    maskf = mask_redone.astype(float) / 255.0
+    result = maskf*image2f + (1.0 - maskf)*image1f
+    cv2.imwrite('results/result_linear_gradient.png', result)
+
+    print('Time elapsed for linear gradient blending: {0:.2f} sec'.format(round(time() - start_time,2)))
+    time_cool = time()
+
+    # Создаём более сложную маску, учитывающую расстояния до границ области
+
+    # Ищем границы
+    borders = get_borders(zone_c_log)
+    disp_borders = np.zeros(borders.shape)
+    disp_borders[borders] = 255
+    disp_borders[zone_a_log&borders] = 100
+    disp_borders[zone_b_log&borders] = 200
+    borders_a = np.argwhere(disp_borders == 100)
+    borders_b = np.argwhere(disp_borders == 200)
+    mask[zone_a_log] = 0
+
+    for point_c in tqdm(zone_c):
+        da = np.sum(np.square(borders_a[closest_node(point_c, borders_a)] - point_c)) ** (1 / 2)
+        db = np.sum(np.square(borders_b[closest_node(point_c, borders_b)] - point_c)) ** (1 / 2)
+        if da >= db:
+            mask[point_c[0], point_c[1]] = (1 - (db/(2*da)))*255
+        else:
+            mask[point_c[0], point_c[1]] = (da/(db*2)) * 255
+    cv2.imwrite("results/mask_nonlinear_gradient.png", mask)
 
     # Применяем линейный блендинг по альфа значениям из маски
     image1f = image1.astype(float)
     image2f = image2.astype(float)
     maskf = mask.astype(float) / 255.0
     result = maskf*image2f + (1.0 - maskf)*image1f
-    cv2.imwrite('results/blended_linear.jpg', result)
+    cv2.imwrite('results/result_nonlinear_gradient.png', result)
 
-    print('Time elapsed for linear blending: {0:.2f} sec'.format(round(time() - start_time,2)))
-    time_pyramid = time()
-    #Далее идёт пирамидальный блендинг, он навскидку показывает себя хуже линейного
-    #return
-
-    (r1, g1, b1) = split_rgb(image1)
-    (r2, g2, b2) = split_rgb(image2)
-    (rm, gm, bm) = split_rgb(mask)
-
-    r1 = r1.astype(float)
-    g1 = g1.astype(float)
-    b1 = b1.astype(float)
-
-    r2 = r2.astype(float)
-    g2 = g2.astype(float)
-    b2 = b2.astype(float)
-
-    rm = rm.astype(float) / 255.0
-    gm = gm.astype(float) / 255.0
-    bm = bm.astype(float) / 255.0
-
-    # Automatically figure out the size
-    min_size = min(r1.shape)
-    depth = int(math.floor(math.log(min_size, 2))) - 4  # at least 16x16 at the highest level.
-
-    gauss_pyr_maskr = gauss_pyramid(rm, depth)
-    gauss_pyr_maskg = gauss_pyramid(gm, depth)
-    gauss_pyr_maskb = gauss_pyramid(bm, depth)
-
-    gauss_pyr_image1r = gauss_pyramid(r1, depth)
-    gauss_pyr_image1g = gauss_pyramid(g1, depth)
-    gauss_pyr_image1b = gauss_pyramid(b1, depth)
-
-    gauss_pyr_image2r = gauss_pyramid(r2, depth)
-    gauss_pyr_image2g = gauss_pyramid(g2, depth)
-    gauss_pyr_image2b = gauss_pyramid(b2, depth)
-
-    lapl_pyr_image1r = lapl_pyramid(gauss_pyr_image1r)
-    lapl_pyr_image1g = lapl_pyramid(gauss_pyr_image1g)
-    lapl_pyr_image1b = lapl_pyramid(gauss_pyr_image1b)
-
-    lapl_pyr_image2r = lapl_pyramid(gauss_pyr_image2r)
-    lapl_pyr_image2g = lapl_pyramid(gauss_pyr_image2g)
-    lapl_pyr_image2b = lapl_pyramid(gauss_pyr_image2b)
-
-    outpyrr = blend(lapl_pyr_image2r, lapl_pyr_image1r, gauss_pyr_maskr)
-    outpyrg = blend(lapl_pyr_image2g, lapl_pyr_image1g, gauss_pyr_maskg)
-    outpyrb = blend(lapl_pyr_image2b, lapl_pyr_image1b, gauss_pyr_maskb)
-
-    outimgr = collapse(blend(lapl_pyr_image2r, lapl_pyr_image1r, gauss_pyr_maskr))
-    outimgg = collapse(blend(lapl_pyr_image2g, lapl_pyr_image1g, gauss_pyr_maskg))
-    outimgb = collapse(blend(lapl_pyr_image2b, lapl_pyr_image1b, gauss_pyr_maskb))
-    # blending sometimes results in slightly out of bound numbers.
-    outimgr[outimgr < 0] = 0
-    outimgr[outimgr > 255] = 255
-    outimgr = outimgr.astype(np.uint8)
-
-    outimgg[outimgg < 0] = 0
-    outimgg[outimgg > 255] = 255
-    outimgg = outimgg.astype(np.uint8)
-
-    outimgb[outimgb < 0] = 0
-    outimgb[outimgb > 255] = 255
-    outimgb = outimgb.astype(np.uint8)
-
-    result = np.zeros(image1.shape, dtype=image1.dtype)
-    tmp = []
-    tmp.append(outimgb)
-    tmp.append(outimgg)
-    tmp.append(outimgr)
-    result = cv2.merge(tmp, result)
-    cv2.imwrite('results/blended_pyramid.jpg', result)
-    print('Time elapsed for pyramidal blending: {0:.2f} sec'.format(round(time() - time_pyramid,2)))
+    print('Time elapsed for non-linear gradient blending: {0:.2f} sec'.format(round(time() - time_cool,2)))
 
 if __name__ == '__main__':
     main()
