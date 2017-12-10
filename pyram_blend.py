@@ -6,7 +6,7 @@ import scipy
 from scipy.signal import convolve2d
 import math
 from tqdm import tqdm
-import time
+from time import time
 
 '''split rgb image to its channels'''
 def split_rgb(image):
@@ -100,34 +100,35 @@ def linear_function(x, xmin, xmax):
         res = 255
     return res
 
+'''Создаём маску, где своим цветом показаны зоны изображений и область наложения'''
 def create_mask(image1, image2):
     mask = np.zeros(image1.shape, dtype=image1.dtype)
 
-    red1, green1, blue1 = image1[:, :, 0], image1[:, :, 1], image1[:, :, 2]
-    mask1 = (red1 > 0) | (green1 > 0) | (blue1 > 0)
-    mask[mask1] = [50, 50, 50]
-    red2, green2, blue2 = image2[:, :, 0], image2[:, :, 1], image2[:, :, 2]
-    mask2 = (red2 > 0) | (green2 > 0) | (blue2 > 0)
-    mask[mask2] = [255, 255, 255]
-    mask3 = mask1 & mask2
-    mask[mask3] = [127, 127, 127]
-
-    return mask
-
-def main():
-    start_time = time.time()
-    image1 = cv2.imread('D:\\DownloadsBrowser\\panorama-stitching\\only_img1.png')
-    image2 = cv2.imread('D:\\DownloadsBrowser\\panorama-stitching\\only_img2.png')
-
-    mask = create_mask(image1, image2)
-
-    # Текущая задача: получить контуры С с различием A-C и B-C
-
-    # Значения пикселей в маске, размечающие области изображений
     thresh_a = 50
     thresh_c = 127
     thresh_b = 255
 
+    red1, green1, blue1 = image1[:, :, 0], image1[:, :, 1], image1[:, :, 2]
+    mask1 = (red1 > 0) | (green1 > 0) | (blue1 > 0)
+    mask[mask1] = [thresh_a, thresh_a, thresh_a]
+    red2, green2, blue2 = image2[:, :, 0], image2[:, :, 1], image2[:, :, 2]
+    mask2 = (red2 > 0) | (green2 > 0) | (blue2 > 0)
+    mask[mask2] = [thresh_b, thresh_b, thresh_b]
+    mask3 = mask1 & mask2
+    mask[mask3] = [thresh_c, thresh_c, thresh_c]
+
+    return mask, thresh_a, thresh_b, thresh_c
+
+def main(image1, image2):
+    start_time = time()
+
+    mask, thresh_a, thresh_b, thresh_c = create_mask(image1, image2)
+
+    cv2.imwrite("intermediate/mask.png", mask)
+
+    # Текущая задача: получить контуры С с различием A-C и B-C
+
+    # Значения пикселей в маске, размечающие области изображений
 
     # Создаём маску для линейного блендинга по градиентной маске по заданному направлению
     # Обозначаем зоны А, Б и C:=A^B
@@ -142,20 +143,21 @@ def main():
     min_x, min_y = np.min(zone_c, axis=0)
     max_x, max_y = np.max(zone_c, axis=0)
 
-
     # Направление блендинга: по вектору {direction_x, direction_y} (не забываем, что y идет вниз)
     direction_x = 1.0
     direction_y = -0.15
-    # Коэффициент расширения маски (тип того)
+
+    # Коэффициент расширения маски (для лучшего перехода от 0 к 1)
+    # Чем больше - тем дальше от изображения лежат границы 0 и 1
     stretch_coef = 0.25
 
     mask_redone = mask.copy()
     # Создаём градиентную маску
-    for x,y in tqdm(zone_a):
+    for x,y in zone_a:
          mask_redone[x,y] = (0,0,0)
-    for x, y in tqdm(zone_b):
+    for x, y in zone_b:
         mask_redone[x, y] = (255, 255, 255)
-    for x,y in tqdm(zone_c):
+    for x,y in zone_c:
         p = (y*direction_x + x*direction_y)/(direction_x+direction_y)
         min_p = (min_x*direction_x + min_y*direction_y)/(direction_x+direction_y)
         max_p = (max_x * direction_x + max_y * direction_y) / (direction_x + direction_y)
@@ -163,7 +165,7 @@ def main():
         intensity = linear_function(p, min_p + (max_p - min_p) * stretch_coef, max_p - (max_p - min_p) * stretch_coef)
         mask_redone[x,y] = (intensity, intensity, intensity)
 
-    cv2.imwrite('mask_redone.png', mask_redone)
+    cv2.imwrite('results/mask.png', mask_redone)
     mask = mask_redone
 
     # Применяем линейный блендинг по альфа значениям из маски
@@ -171,10 +173,10 @@ def main():
     image2f = image2.astype(float)
     maskf = mask.astype(float) / 255.0
     result = maskf*image2f + (1.0 - maskf)*image1f
-    cv2.imwrite('blended_no_pyramids_no_split.jpg', result)
+    cv2.imwrite('results/blended_linear.jpg', result)
 
-    print('Time elapsed for linear blending: {0:.2f} sec'.format(round(time.time() - start_time,2)))
-    time_pyramid = time.time()
+    print('Time elapsed for linear blending: {0:.2f} sec'.format(round(time() - start_time,2)))
+    time_pyramid = time()
     #Далее идёт пирамидальный блендинг, он навскидку показывает себя хуже линейного
     #return
 
@@ -244,8 +246,8 @@ def main():
     tmp.append(outimgg)
     tmp.append(outimgr)
     result = cv2.merge(tmp, result)
-    cv2.imwrite('blended_pyramids.jpg', result)
-    print('Time elapsed for pyramidal blending (with images already loaded): {0:.2f} sec'.format(round(time.time() - time_pyramid,2)))
+    cv2.imwrite('results/blended_pyramid.jpg', result)
+    print('Time elapsed for pyramidal blending: {0:.2f} sec'.format(round(time() - time_pyramid,2)))
 
 
 if __name__ == '__main__':
