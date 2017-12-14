@@ -1,13 +1,13 @@
 import cv2
 import os
 import numpy as np
-import pyram_blend
+import alpha_blend
 from time import time
 from tqdm import tqdm
 
 # Use the key points to stitch the images
 def get_stitched_image(img1, img2, M):
-    # Get width and height of input images
+        # Get width and height of input images
     w1, h1 = img1.shape[:2]
     w2, h2 = img2.shape[:2]
 
@@ -41,9 +41,11 @@ def get_stitched_image(img1, img2, M):
     only_img_1[:,:] = (0,0,0)
     only_img_1[transform_dist[1]:w1 + transform_dist[1],
     transform_dist[0]:h1 + transform_dist[0]] = img1
-
+    simplest_stitch = only_img_2.copy()
+    simplest_stitch[transform_dist[1]:w1 + transform_dist[1],
+    transform_dist[0]:h1 + transform_dist[0]] = img1
     # Return the result
-    return only_img_1, only_img_2
+    return only_img_1, only_img_2, simplest_stitch
 
 # Find SIFT and return homography matrix
 def get_surf_homography(img1, img2):
@@ -106,10 +108,10 @@ def main():
         os.makedirs('results')
 
     start_time = time()
-    # image1 = cv2.imread('images/scottsdale_right_01.png')
-    # image2 = cv2.imread('images/scottsdale_left_01.png')
-    image1 = cv2.imread('images/anton2_l.jpg')
-    image2 = cv2.imread('images/anton2_r.jpg')
+    image1 = cv2.imread('images/scottsdale_right_01.png')
+    image2 = cv2.imread('images/scottsdale_left_01.png')
+    #image1 = cv2.imread('images/3r.jpg')
+    #image2 = cv2.imread('image s/3l.jpg')
 
     # Склейка, встроенная в OpenCV; для сравнения
     stitcher = cv2.createStitcher(False)
@@ -128,14 +130,14 @@ def main():
     M = get_surf_homography(image1, image2)
 
     # Stitch the images together using homography matrix
-    only_img_1, only_img_2 = get_stitched_image(image2, image1, M)
+    only_img_1, only_img_2, simplest_stitch = get_stitched_image(image2, image1, M)
 
     cv2.imwrite('intermediate/only_img1.png', only_img_1)
     cv2.imwrite('intermediate/only_img2.png', only_img_2)
-
+    cv2.imwrite('intermediate/stitch_simplest.png', simplest_stitch)
     print('Time elapsed for image warping: {0:.2f} sec'.format(round(time() - image_warping_time,2)))
 
-    pyram_blend.main(only_img_1, only_img_2)
+    alpha_blend.main(only_img_1, only_img_2)
 
     print('Total time elapsed: {0:.2f} sec'.format(round(time() - start_time,2)))
     print('Done, exiting...')
